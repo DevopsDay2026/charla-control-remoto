@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#071329">
+<title>Control de la charla</title>
+<style>
+  :root { --bg:#071329; --panel:#0e1f3d; --ink:#f4f7fc; --mute:#8fa3c0; --acc:#6d28d9; --acc2:#00bceb;
+          --warn:#f5a524; --bad:#ff4d6d; --ok:#2dd4a0; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink);
+               font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--panel); }
+  #num { font-size: 22px; font-weight: 700; }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); flex: none; }
+  #dot.on { background: var(--ok); }
+  #timer { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 20px; font-weight: 600; }
+  #timer.warn { color: var(--warn); } #timer.bad { color: var(--bad); }
+  .ico { background: none; border: 1px solid #25406d; color: var(--ink); border-radius: 8px; height: 34px; min-width: 38px; font-size: 15px; }
+  #title { padding: 8px 14px 0; color: var(--acc2); font-weight: 600; font-size: 15px; min-height: 26px; }
+  #notes { flex: 1; overflow-y: auto; padding: 8px 14px 14px; line-height: 1.45; white-space: pre-wrap;
+           -webkit-overflow-scrolling: touch; font-size: 19px; }
+  #notes .hd { color: var(--mute); font-size: .8em; display: block; margin-bottom: 6px; }
+  #notes .warn { color: var(--warn); }
+  #notes .who { color: var(--acc2); font-weight: 700; }
+  #msg { padding: 6px 14px; text-align: center; color: var(--warn); font-size: 14px; display: none; }
+  #start { display: none; margin: 10px 14px; padding: 16px; border-radius: 12px; border: 0; background: var(--acc);
+           color: #fff; font-size: 18px; font-weight: 700; }
+  nav { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 10px; padding: 10px 14px 14px; background: var(--panel); }
+  nav button { border: 0; border-radius: 16px; font-size: clamp(16px, 5vw, 22px); font-weight: 800; height: 92px; color: #fff;
+               touch-action: manipulation; min-width: 0; padding: 0 6px; }
+  html, body { max-width: 100vw; overflow-x: hidden; }
+  header { flex-wrap: nowrap; min-width: 0; } #num { white-space: nowrap; font-size: clamp(16px, 5vw, 22px); }
+  #timer { font-size: clamp(16px, 4.5vw, 20px); }
+  #prev { background: #25406d; } #next { background: var(--acc); }
+  nav button:active { filter: brightness(1.3); transform: scale(.98); }
+</style>
+</head>
+<body>
+<header>
+  <span id="dot"></span><span id="num">–</span>
+  <button class="ico" id="fm" aria-label="Texto más pequeño">A−</button>
+  <button class="ico" id="fp" aria-label="Texto más grande">A+</button>
+  <span id="timer">00:00</span>
+  <button class="ico" id="rst" aria-label="Reiniciar cronómetro">⟲</button>
+</header>
+<div id="title"></div>
+<div id="msg"></div>
+<button id="start">▶ Iniciar la presentación</button>
+<div id="notes"></div>
+<nav>
+  <button id="prev">◀ Anterior</button>
+  <button id="next">Siguiente ▶</button>
+</nav>
+<script>
+(function () {
+  var K = new URLSearchParams(location.search).get('k') || '';
+  var $ = function (id) { return document.getElementById(id); };
+  var last = { slide: -1 }, online = false, fs = 19;
+  try { fs = parseInt(localStorage.getItem('fs'), 10) || 19; } catch (e) {}
+  $('notes').style.fontSize = fs + 'px';
+
+  function setFs(d) {
+    fs = Math.max(14, Math.min(34, fs + d)); $('notes').style.fontSize = fs + 'px';
+    try { localStorage.setItem('fs', fs); } catch (e) {}
+  }
+  function fmt(s) { var m = Math.floor(s / 60), r = s % 60; return (m < 10 ? '0' : '') + m + ':' + (r < 10 ? '0' : '') + r; }
+
+  function renderNotes(text) {
+    var box = $('notes'); box.textContent = '';
+    if (!text) { var e = document.createElement('span'); e.className = 'hd'; e.textContent = '(esta lámina no tiene notas)'; box.appendChild(e); return; }
+    text.split('\n').forEach(function (ln, i, arr) {
+      var s = document.createElement('span');
+      if (/^\[.*\]$/.test(ln.trim())) s.className = 'hd';
+      else if (/(SEÑAL DE CORTE|CUIDADO|PENDIENTE|SI VAMOS TARDE|CORREGIR|NO se demuestra)/.test(ln)) s.className = 'warn';
+      else if (/^(LINA|JOHN|LOS DOS|DICE|- LINA|- JOHN)/.test(ln)) s.className = 'who';
+      s.textContent = ln + (i < arr.length - 1 ? '\n' : '');
+      box.appendChild(s);
+    });
+  }
+
+  function paint(st) {
+    if (!st.ok) { online = true; setMsg(st.error || 'Error'); $('start').style.display = 'none'; return; }
+    setMsg(st.note || '');
+    $('num').textContent = 'Lámina ' + st.slide + ' / ' + st.total;
+    $('title').textContent = st.title || '';
+    $('start').style.display = st.mode === 'edit' ? 'block' : 'none';
+    if (st.mode === 'edit') setMsg('Presentación sin iniciar (vista de edición)');
+    var t = $('timer'); t.textContent = fmt(st.elapsed || 0);
+    t.className = (st.elapsed >= 1800) ? 'bad' : (st.elapsed >= 1500 ? 'warn' : '');
+    if (st.slide !== last.slide || st.notes !== last.notes) {
+      var keep = st.slide === last.slide ? $('notes').scrollTop : 0;
+      renderNotes(st.notes); $('notes').scrollTop = keep;
+    }
+    last = st;
+  }
+  function setMsg(m) { var e = $('msg'); e.textContent = m; e.style.display = m ? 'block' : 'none'; }
+  function setOnline(v) { online = v; $('dot').className = v ? 'on' : ''; if (!v) setMsg('Sin conexión con el portátil…'); }
+
+  function call(path) {
+    return fetch(path + (path.indexOf('?') < 0 ? '?' : '&') + 'k=' + encodeURIComponent(K), { cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 403) { setMsg('PIN incorrecto: abre el enlace del QR'); throw new Error('pin'); }
+        return r.json();
+      })
+      .then(function (j) { setOnline(true); paint(j); return j; });
+  }
+  function poll() { call('/api/state').catch(function (e) { if (e.message !== 'pin') setOnline(false); }); }
+  function cmd(c) {
+    if (navigator.vibrate) navigator.vibrate(20);
+    call('/api/cmd?c=' + c + '&at=' + (last.slide > 0 ? last.slide : '')).catch(function () { setOnline(false); });
+  }
+
+  $('next').addEventListener('click', function () { cmd('next'); });
+  $('prev').addEventListener('click', function () { cmd('prev'); });
+  $('start').addEventListener('click', function () { cmd('start'); });
+  $('fm').addEventListener('click', function () { setFs(-2); });
+  $('fp').addEventListener('click', function () { setFs(2); });
+  $('rst').addEventListener('click', function () { call('/api/cmd?c=reset'); });
+  setInterval(poll, 700); poll();
+})();
+</script>
+</body>
+</html>
