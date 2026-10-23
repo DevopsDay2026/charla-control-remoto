@@ -68,20 +68,26 @@ class State:
 
 
 def local_ips():
+    """IPs locales; la de la ruta por defecto (Wi-Fi/hotspot) va al final, que es la del QR."""
     ips = set()
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ips.add(info[4][0])
     except OSError:
         pass
+    primary = None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("10.255.255.255", 1))
-        ips.add(s.getsockname()[0])
+        primary = s.getsockname()[0]
         s.close()
     except OSError:
         pass
-    return sorted(i for i in ips if not i.startswith(("127.", "169.254.")))
+    ips = sorted(i for i in ips | {primary} - {None} if not i.startswith(("127.", "169.254.")))
+    if primary in ips:
+        ips.remove(primary)
+        ips.append(primary)
+    return ips
 
 
 def make_handler(bridge, pin):
